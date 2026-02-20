@@ -70,24 +70,49 @@ def calculate_signal(df):
     # 5. sma_20 = ta.sma(hl2, 20)
     sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
     
-    # 6. Check for solid color (no gray zone)
-    # y1 is the origin price (hl2 when trend changed)
-    # y2 is the current sma_20 of the channel bounds
-    # Green: trend == True AND origin_price_up < sma_20 (channel slopes up)
-    # Orange: trend == False AND origin_price_dn > sma_20 (channel slopes down)
+    # 6. Check for solid color WITH gray zone filter
+    # Matching logic from "logic strategy.md":
+    #   var float true_y1 = na
+    #   if ta.change(trend) or na(true_y1)
+    #       true_y1 := hl2          // y1 = điểm neo khi trend thay đổi
+    #   float true_y2 = ta.sma(hl2, 20)  // y2 = SMA(20) của hl2
+    #   bool is_gray = trend ? (true_y1 >= true_y2) : (true_y1 <= true_y2)
     
-    # We use sma_20 of hl2 to represent the mid line's y2 as per PineScript:
-    # `c.line_mid1.set_xy2(bar_index, ta.sma(src, 20))` where src is `hl2`
+    # true_y1: hl2 tại thời điểm trend thay đổi
+    trend_changed = trend != trend.shift(1)
+    df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
+    df['true_y1'] = df['true_y1'].ffill()
     
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20)
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20)
+    # true_y2: ta.sma(hl2, 20)
+    true_y2 = sma_20
     
-    # In the Pine Script, solid_green_now requires active_y1 < active_y2.
-    # is_gray_zone = trend ? (active_y1 >= active_y2) : (active_y1 <= active_y2)
-    # is_ready_to_trade = not is_gray_zone
+    # is_gray: Vùng xám (kênh nét đứt, KHÔNG được giao dịch)
+    is_gray = np.where(trend == True, df['true_y1'] >= true_y2, df['true_y1'] <= true_y2)
+    is_gray = pd.Series(is_gray, index=df.index).astype(bool)
     
-    current_is_green = is_green.iloc[-1]
-    current_is_orange = is_orange.iloc[-1]
+    # is_colored: ngược lại vùng xám = vùng có MÀU (xanh hoặc cam)
+    is_colored = ~is_gray
+    
+    # ĐẾM SỐ NẾN LIÊN TỤC CÓ MÀU (không phải xám)
+    # Để xác nhận vùng màu đã ổn định, tránh vào lệnh ở đầu dải xám
+    colored_streak = pd.Series(0, index=df.index, dtype=int)
+    for i in range(1, len(df)):
+        if is_colored.iloc[i]:
+            colored_streak.iloc[i] = colored_streak.iloc[i-1] + 1
+        else:
+            colored_streak.iloc[i] = 0
+    
+    # Chỉ cho phép giao dịch khi vùng màu đã xác nhận ít nhất 3 nến liên tiếp
+    # Điều này ngăn bot vào lệnh ở đầu dải xám (khi nó mới chớp màu 1-2 nến)
+    MIN_COLORED_BARS = 3
+    is_confirmed_color = colored_streak >= MIN_COLORED_BARS
+    
+    # Final signals
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & is_confirmed_color
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & is_confirmed_color
+    
+    current_is_green = bool(is_green.iloc[-1]) if len(is_green) > 0 else False
+    current_is_orange = bool(is_orange.iloc[-1]) if len(is_orange) > 0 else False
     
     if current_is_green:
         return 'LONG'

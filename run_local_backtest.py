@@ -79,9 +79,28 @@ def run_backtest(symbol='BTC/USDT', timeframe='15m', days=90):
     
     sma_20 = strategy.calculate_sma(df['hl2'], config.SMA_PERIOD)
     
-    # Matching strictly without gray logic
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20)
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20)
+    # Gray zone filter (matching logic strategy.md)
+    trend_changed = trend != trend.shift(1)
+    df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
+    df['true_y1'] = df['true_y1'].ffill()
+    
+    is_gray = np.where(trend == True, df['true_y1'] >= sma_20, df['true_y1'] <= sma_20)
+    is_gray = pd.Series(is_gray, index=df.index).astype(bool)
+    is_colored = ~is_gray
+    
+    # Count consecutive colored bars
+    colored_streak = pd.Series(0, index=df.index, dtype=int)
+    for i in range(1, len(df)):
+        if is_colored.iloc[i]:
+            colored_streak.iloc[i] = colored_streak.iloc[i-1] + 1
+        else:
+            colored_streak.iloc[i] = 0
+    
+    MIN_COLORED_BARS = 3
+    is_confirmed_color = colored_streak >= MIN_COLORED_BARS
+    
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & is_confirmed_color
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & is_confirmed_color
     
     long_signal = is_green & ~is_green.shift(1, fill_value=False)
     short_signal = is_orange & ~is_orange.shift(1, fill_value=False)
