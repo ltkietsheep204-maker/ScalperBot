@@ -68,11 +68,30 @@ def run_backtest(symbol='BTC/USDT', timeframe='15m', days=90):
     trend.loc[df['signal_dn']] = False
     trend = trend.ffill().infer_objects(copy=False)
     
-    # Tín hiệu: Hình thoi xanh = LONG, Hình thoi cam = SHORT
+    # Origin prices (y1 of channel line)
     trend_changed_up = (trend == True) & (trend.shift(1) == False)
     trend_changed_dn = (trend == False) & (trend.shift(1) == True)
-    df['LONG'] = trend_changed_up
-    df['SHORT'] = trend_changed_dn
+    
+    df['origin_price_up'] = np.where(trend_changed_up, df['hl2'], np.nan)
+    df['origin_price_up'] = df['origin_price_up'].ffill()
+    
+    df['origin_price_dn'] = np.where(trend_changed_dn, df['hl2'], np.nan)
+    df['origin_price_dn'] = df['origin_price_dn'].ffill()
+    
+    sma_20 = strategy.calculate_sma(df['hl2'], config.SMA_PERIOD)
+    
+    # Diamond visibility (from color_lines in indicator)
+    # Green diamond visible when: origin_hl2 < sma(hl2, 20) = channel slopes UP
+    # Orange diamond visible when: origin_hl2 > sma(hl2, 20) = channel slopes DOWN
+    diamond_green = (trend == True) & (df['origin_price_up'] < sma_20)
+    diamond_orange = (trend == False) & (df['origin_price_dn'] > sma_20)
+    
+    # Edge detection: enter on FIRST bar diamond becomes visible
+    long_signal = diamond_green & ~diamond_green.shift(1, fill_value=False)
+    short_signal = diamond_orange & ~diamond_orange.shift(1, fill_value=False)
+    
+    df['LONG'] = long_signal
+    df['SHORT'] = short_signal
     
     # Backtest logic
     position = 0 # 1 for Long, -1 for Short

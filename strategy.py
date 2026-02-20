@@ -55,22 +55,38 @@ def calculate_signal(df):
     trend.loc[df['signal_dn']] = False
     trend = trend.ffill().infer_objects(copy=False)
     
-    # 4. Tín hiệu giao dịch: VÀO LỆNH KHI XUẤT HIỆN HÌNH THOI
-    # Hình thoi xanh = trend đổi từ False → True → LONG
-    # Hình thoi cam = trend đổi từ True → False → SHORT
-    # Xám = không có hình thoi → HOLD
+    # 4. Origin prices (hl2 at trend change = y1 of the channel line)
+    trend_changed_up = (trend == True) & (trend.shift(1) == False)
+    trend_changed_dn = (trend == False) & (trend.shift(1) == True)
     
-    trend_changed_up = (trend == True) & (trend.shift(1) == False)  # Hình thoi xanh
-    trend_changed_dn = (trend == False) & (trend.shift(1) == True)  # Hình thoi cam
+    df['origin_price_up'] = np.where(trend_changed_up, df['hl2'], np.nan)
+    df['origin_price_up'] = df['origin_price_up'].ffill()
     
-    # Kiểm tra nến cuối cùng (nến hiện tại)
+    df['origin_price_dn'] = np.where(trend_changed_dn, df['hl2'], np.nan)
+    df['origin_price_dn'] = df['origin_price_dn'].ffill()
+    
+    # 5. sma_20 = ta.sma(hl2, 20) = y2 of the channel line (updated every bar)
+    sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
+    
+    # 6. DIAMOND VISIBILITY (from color_lines() in indicator)
+    # color_lines sets diamond to 100% transparent when channel is GRAY
+    # Diamond VISIBLE = channel has COLOR:
+    #   Green diamond: y1 <= y2 → origin_hl2 <= sma(hl2, 20) → channel slopes UP
+    #   Orange diamond: y1 >= y2 → origin_hl2 >= sma(hl2, 20) → channel slopes DOWN
+    
+    diamond_green_visible = (trend == True) & (df['origin_price_up'] < sma_20)
+    diamond_orange_visible = (trend == False) & (df['origin_price_dn'] > sma_20)
+    
+    # Check current bar
     if len(df) < 2:
         return 'HOLD'
     
-    # Nến cuối là nến liền kề sau hình thoi
-    if trend_changed_up.iloc[-1]:
+    current_green = bool(diamond_green_visible.iloc[-1]) if not pd.isna(diamond_green_visible.iloc[-1]) else False
+    current_orange = bool(diamond_orange_visible.iloc[-1]) if not pd.isna(diamond_orange_visible.iloc[-1]) else False
+    
+    if current_green:
         return 'LONG'
-    elif trend_changed_dn.iloc[-1]:
+    elif current_orange:
         return 'SHORT'
     else:
         return 'HOLD'
