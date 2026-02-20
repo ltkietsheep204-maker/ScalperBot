@@ -70,46 +70,24 @@ def calculate_signal(df):
     # 5. sma_20 = ta.sma(hl2, 20)
     sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
     
-    # 6. Check for solid color WITH gray zone filter
-    # Matching logic from "logic strategy.md":
-    #   var float true_y1 = na
-    #   if ta.change(trend) or na(true_y1)
-    #       true_y1 := hl2          // y1 = điểm neo khi trend thay đổi
-    #   float true_y2 = ta.sma(hl2, 20)  // y2 = SMA(20) của hl2
-    #   bool is_gray = trend ? (true_y1 >= true_y2) : (true_y1 <= true_y2)
+    # 6. Bộ lọc vùng xám (matching logic strategy.md)
+    # true_y1 = hl2 tại thời điểm trend thay đổi (điểm neo)
+    # true_y2 = ta.sma(hl2, 20) (độ dốc hiện tại)
+    # is_gray = trend ? (true_y1 >= true_y2) : (true_y1 <= true_y2)
     
-    # true_y1: hl2 tại thời điểm trend thay đổi
     trend_changed = trend != trend.shift(1)
     df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
     df['true_y1'] = df['true_y1'].ffill()
     
-    # true_y2: ta.sma(hl2, 20)
     true_y2 = sma_20
     
-    # is_gray: Vùng xám (kênh nét đứt, KHÔNG được giao dịch)
+    # Vùng xám: CẤM giao dịch
     is_gray = np.where(trend == True, df['true_y1'] >= true_y2, df['true_y1'] <= true_y2)
     is_gray = pd.Series(is_gray, index=df.index).astype(bool)
     
-    # is_colored: ngược lại vùng xám = vùng có MÀU (xanh hoặc cam)
-    is_colored = ~is_gray
-    
-    # ĐẾM SỐ NẾN LIÊN TỤC CÓ MÀU (không phải xám)
-    # Để xác nhận vùng màu đã ổn định, tránh vào lệnh ở đầu dải xám
-    colored_streak = pd.Series(0, index=df.index, dtype=int)
-    for i in range(1, len(df)):
-        if is_colored.iloc[i]:
-            colored_streak.iloc[i] = colored_streak.iloc[i-1] + 1
-        else:
-            colored_streak.iloc[i] = 0
-    
-    # Chỉ cho phép giao dịch khi vùng màu đã xác nhận ít nhất 3 nến liên tiếp
-    # Điều này ngăn bot vào lệnh ở đầu dải xám (khi nó mới chớp màu 1-2 nến)
-    MIN_COLORED_BARS = 3
-    is_confirmed_color = colored_streak >= MIN_COLORED_BARS
-    
-    # Final signals
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & is_confirmed_color
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & is_confirmed_color
+    # Tín hiệu vào lệnh: có màu (not gray) + đúng hướng trend
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & (~is_gray)
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & (~is_gray)
     
     current_is_green = bool(is_green.iloc[-1]) if len(is_green) > 0 else False
     current_is_orange = bool(is_orange.iloc[-1]) if len(is_orange) > 0 else False
