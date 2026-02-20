@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+venv/
+env/
+.env
+.venv
+
+# Database (chứa dữ liệu thật, không push)
+*.sqlite
+*.db
+
+# API Keys / Secrets — KHÔNG BAO GIỜ push lên GitHub
+.env
+secrets.py
+config_local.py
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
