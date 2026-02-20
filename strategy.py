@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import config
 
+pd.set_option('future.no_silent_downcasting', True)
+
 def calculate_sma(series, length):
     return series.rolling(window=length).mean()
 
@@ -49,9 +51,9 @@ def calculate_signal(df):
     
     # Forward fill trend
     trend = pd.Series(index=df.index, dtype=object)
-    trend[df['signal_up']] = True
-    trend[df['signal_dn']] = False
-    trend = trend.ffill()
+    trend.loc[df['signal_up']] = True
+    trend.loc[df['signal_dn']] = False
+    trend = trend.ffill().infer_objects(copy=False)
     
     # 4. draw_channel origin prices
     # if trend and not trend[1]: origin_price_up = hl2
@@ -68,11 +70,21 @@ def calculate_signal(df):
     # 5. sma_20 = ta.sma(hl2, 20)
     sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
     
-    # 6. is_green = trend and (origin_price_up <= sma_20)
-    #    is_orange = not trend and (origin_price_dn >= sma_20)
+    # 6. Check for solid color (no gray zone)
+    # y1 is the origin price (hl2 when trend changed)
+    # y2 is the current sma_20 of the channel bounds
+    # Green: trend == True AND origin_price_up < sma_20 (channel slopes up)
+    # Orange: trend == False AND origin_price_dn > sma_20 (channel slopes down)
     
-    is_green = (trend == True) & (df['origin_price_up'] <= sma_20)
-    is_orange = (trend == False) & (df['origin_price_dn'] >= sma_20)
+    # We use sma_20 of hl2 to represent the mid line's y2 as per PineScript:
+    # `c.line_mid1.set_xy2(bar_index, ta.sma(src, 20))` where src is `hl2`
+    
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20)
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20)
+    
+    # In the Pine Script, solid_green_now requires active_y1 < active_y2.
+    # is_gray_zone = trend ? (active_y1 >= active_y2) : (active_y1 <= active_y2)
+    # is_ready_to_trade = not is_gray_zone
     
     current_is_green = is_green.iloc[-1]
     current_is_orange = is_orange.iloc[-1]
