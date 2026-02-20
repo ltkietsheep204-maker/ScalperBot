@@ -70,10 +70,9 @@ def calculate_signal(df):
     # 5. sma_20 = ta.sma(hl2, 20)
     sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
     
-    # 6. Bộ lọc vùng xám (matching logic strategy.md)
-    # true_y1 = hl2 tại thời điểm trend thay đổi (điểm neo)
-    # true_y2 = ta.sma(hl2, 20) (độ dốc hiện tại)
-    # is_gray = trend ? (true_y1 >= true_y2) : (true_y1 <= true_y2)
+    # 6. Bộ lọc vùng xám - STATE MACHINE
+    # Logic: Kênh mới sinh → phải đi qua XÁM trước → khi THOÁT KHỎI xám mới được trade
+    # Ngăn chặn việc vào lệnh ở ĐẦU dải xám (khi kênh chớp màu rồi đi vào xám)
     
     trend_changed = trend != trend.shift(1)
     df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
@@ -81,13 +80,33 @@ def calculate_signal(df):
     
     true_y2 = sma_20
     
-    # Vùng xám: CẤM giao dịch
+    # is_gray: Vùng xám (kênh nét đứt)
     is_gray = np.where(trend == True, df['true_y1'] >= true_y2, df['true_y1'] <= true_y2)
     is_gray = pd.Series(is_gray, index=df.index).astype(bool)
     
-    # Tín hiệu vào lệnh: có màu (not gray) + đúng hướng trend
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & (~is_gray)
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & (~is_gray)
+    # State machine: theo dõi vòng đời của mỗi kênh
+    # was_gray_in_this_channel: kênh hiện tại ĐÃ TỪNG đi qua xám chưa?
+    # can_trade: chỉ = True khi kênh đã qua xám VÀ bây giờ có màu
+    was_gray = pd.Series(False, index=df.index, dtype=bool)
+    can_trade = pd.Series(False, index=df.index, dtype=bool)
+    
+    prev_was_gray = False
+    for i in range(len(df)):
+        if trend_changed.iloc[i]:
+            # Kênh mới sinh → reset trạng thái
+            prev_was_gray = False
+        
+        if is_gray.iloc[i]:
+            # Kênh đang trong vùng xám → ghi nhận
+            prev_was_gray = True
+        
+        was_gray.iloc[i] = prev_was_gray
+        # Chỉ cho trade khi: đã từng xám + bây giờ KHÔNG xám (có màu)
+        can_trade.iloc[i] = prev_was_gray and not is_gray.iloc[i]
+    
+    # Tín hiệu cuối cùng: có màu + đã qua xám trước đó
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & can_trade
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & can_trade
     
     current_is_green = bool(is_green.iloc[-1]) if len(is_green) > 0 else False
     current_is_orange = bool(is_orange.iloc[-1]) if len(is_orange) > 0 else False

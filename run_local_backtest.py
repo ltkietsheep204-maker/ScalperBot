@@ -87,9 +87,18 @@ def run_backtest(symbol='BTC/USDT', timeframe='15m', days=90):
     is_gray = np.where(trend == True, df['true_y1'] >= sma_20, df['true_y1'] <= sma_20)
     is_gray = pd.Series(is_gray, index=df.index).astype(bool)
     
-    # Tín hiệu: có màu (not gray) + đúng hướng trend → vào lệnh ngay lập tức
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & (~is_gray)
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & (~is_gray)
+    # State machine: kênh phải đi qua XÁM trước → khi thoát xám mới được trade
+    can_trade = pd.Series(False, index=df.index, dtype=bool)
+    prev_was_gray = False
+    for i in range(len(df)):
+        if trend_changed.iloc[i]:
+            prev_was_gray = False
+        if is_gray.iloc[i]:
+            prev_was_gray = True
+        can_trade.iloc[i] = prev_was_gray and not is_gray.iloc[i]
+    
+    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & can_trade
+    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & can_trade
     
     long_signal = is_green & ~is_green.shift(1, fill_value=False)
     short_signal = is_orange & ~is_orange.shift(1, fill_value=False)
