@@ -68,43 +68,11 @@ def run_backtest(symbol='BTC/USDT', timeframe='15m', days=90):
     trend.loc[df['signal_dn']] = False
     trend = trend.ffill().infer_objects(copy=False)
     
+    # Tín hiệu: Hình thoi xanh = LONG, Hình thoi cam = SHORT
     trend_changed_up = (trend == True) & (trend.shift(1) == False)
     trend_changed_dn = (trend == False) & (trend.shift(1) == True)
-    
-    df['origin_price_up'] = np.where(trend_changed_up, df['hl2'], np.nan)
-    df['origin_price_up'] = df['origin_price_up'].ffill()
-    
-    df['origin_price_dn'] = np.where(trend_changed_dn, df['hl2'], np.nan)
-    df['origin_price_dn'] = df['origin_price_dn'].ffill()
-    
-    sma_20 = strategy.calculate_sma(df['hl2'], config.SMA_PERIOD)
-    
-    # Gray zone filter (matching logic strategy.md)
-    trend_changed = trend != trend.shift(1)
-    df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
-    df['true_y1'] = df['true_y1'].ffill()
-    
-    is_gray = np.where(trend == True, df['true_y1'] >= sma_20, df['true_y1'] <= sma_20)
-    is_gray = pd.Series(is_gray, index=df.index).astype(bool)
-    
-    # State machine: kênh phải đi qua XÁM trước → khi thoát xám mới được trade
-    can_trade = pd.Series(False, index=df.index, dtype=bool)
-    prev_was_gray = False
-    for i in range(len(df)):
-        if trend_changed.iloc[i]:
-            prev_was_gray = False
-        if is_gray.iloc[i]:
-            prev_was_gray = True
-        can_trade.iloc[i] = prev_was_gray and not is_gray.iloc[i]
-    
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & can_trade
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & can_trade
-    
-    long_signal = is_green & ~is_green.shift(1, fill_value=False)
-    short_signal = is_orange & ~is_orange.shift(1, fill_value=False)
-    
-    df['LONG'] = long_signal
-    df['SHORT'] = short_signal
+    df['LONG'] = trend_changed_up
+    df['SHORT'] = trend_changed_dn
     
     # Backtest logic
     position = 0 # 1 for Long, -1 for Short

@@ -55,65 +55,22 @@ def calculate_signal(df):
     trend.loc[df['signal_dn']] = False
     trend = trend.ffill().infer_objects(copy=False)
     
-    # 4. draw_channel origin prices
-    # if trend and not trend[1]: origin_price_up = hl2
-    # if not trend and trend[1]: origin_price_dn = hl2
-    trend_changed_up = (trend == True) & (trend.shift(1) == False)
-    trend_changed_dn = (trend == False) & (trend.shift(1) == True)
+    # 4. Tín hiệu giao dịch: VÀO LỆNH KHI XUẤT HIỆN HÌNH THOI
+    # Hình thoi xanh = trend đổi từ False → True → LONG
+    # Hình thoi cam = trend đổi từ True → False → SHORT
+    # Xám = không có hình thoi → HOLD
     
-    df['origin_price_up'] = np.where(trend_changed_up, df['hl2'], np.nan)
-    df['origin_price_up'] = df['origin_price_up'].ffill()
+    trend_changed_up = (trend == True) & (trend.shift(1) == False)  # Hình thoi xanh
+    trend_changed_dn = (trend == False) & (trend.shift(1) == True)  # Hình thoi cam
     
-    df['origin_price_dn'] = np.where(trend_changed_dn, df['hl2'], np.nan)
-    df['origin_price_dn'] = df['origin_price_dn'].ffill()
+    # Kiểm tra nến cuối cùng (nến hiện tại)
+    if len(df) < 2:
+        return 'HOLD'
     
-    # 5. sma_20 = ta.sma(hl2, 20)
-    sma_20 = calculate_sma(df['hl2'], config.SMA_PERIOD)
-    
-    # 6. Bộ lọc vùng xám - STATE MACHINE
-    # Logic: Kênh mới sinh → phải đi qua XÁM trước → khi THOÁT KHỎI xám mới được trade
-    # Ngăn chặn việc vào lệnh ở ĐẦU dải xám (khi kênh chớp màu rồi đi vào xám)
-    
-    trend_changed = trend != trend.shift(1)
-    df['true_y1'] = np.where(trend_changed, df['hl2'], np.nan)
-    df['true_y1'] = df['true_y1'].ffill()
-    
-    true_y2 = sma_20
-    
-    # is_gray: Vùng xám (kênh nét đứt)
-    is_gray = np.where(trend == True, df['true_y1'] >= true_y2, df['true_y1'] <= true_y2)
-    is_gray = pd.Series(is_gray, index=df.index).astype(bool)
-    
-    # State machine: theo dõi vòng đời của mỗi kênh
-    # was_gray_in_this_channel: kênh hiện tại ĐÃ TỪNG đi qua xám chưa?
-    # can_trade: chỉ = True khi kênh đã qua xám VÀ bây giờ có màu
-    was_gray = pd.Series(False, index=df.index, dtype=bool)
-    can_trade = pd.Series(False, index=df.index, dtype=bool)
-    
-    prev_was_gray = False
-    for i in range(len(df)):
-        if trend_changed.iloc[i]:
-            # Kênh mới sinh → reset trạng thái
-            prev_was_gray = False
-        
-        if is_gray.iloc[i]:
-            # Kênh đang trong vùng xám → ghi nhận
-            prev_was_gray = True
-        
-        was_gray.iloc[i] = prev_was_gray
-        # Chỉ cho trade khi: đã từng xám + bây giờ KHÔNG xám (có màu)
-        can_trade.iloc[i] = prev_was_gray and not is_gray.iloc[i]
-    
-    # Tín hiệu cuối cùng: có màu + đã qua xám trước đó
-    is_green = (trend == True) & (df['origin_price_up'] < sma_20) & can_trade
-    is_orange = (trend == False) & (df['origin_price_dn'] > sma_20) & can_trade
-    
-    current_is_green = bool(is_green.iloc[-1]) if len(is_green) > 0 else False
-    current_is_orange = bool(is_orange.iloc[-1]) if len(is_orange) > 0 else False
-    
-    if current_is_green:
+    # Nến cuối là nến liền kề sau hình thoi
+    if trend_changed_up.iloc[-1]:
         return 'LONG'
-    elif current_is_orange:
+    elif trend_changed_dn.iloc[-1]:
         return 'SHORT'
     else:
         return 'HOLD'
